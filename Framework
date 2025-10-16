@@ -1,0 +1,163 @@
+class GasConcentrationDetector:
+    """
+    Simplified gas concentration detection system using AT-EKF
+    """
+    
+    def __init__(self, initial_concentration: float = 0.0):
+        """
+        Initialize gas concentration detection system
+        
+        Args:
+            initial_concentration: Initial gas concentration estimate (ppm)
+        """
+        # State: [gas_concentration, drift_rate] for simplicity
+        self.state_dim = 2
+        self.obs_dim = 1
+        
+        # Initialize state and covariance
+        self.x = np.array([initial_concentration, 0.0])  # [concentration, drift]
+        self.P = np.diag([10.0, 0.1])  # Initial uncertainty
+        
+        # Define system parameters
+        self.dt = 1.0  # Sampling time (seconds)
+        
+        # Initialize AT-EKF
+        self.ekf = self._initialize_ekf()
+        
+    def _state_transition(self, x: np.ndarray) -> np.ndarray:
+        """
+        State transition function for gas concentration dynamics
+        
+        Args:
+            x: Current state [concentration, drift]
+            
+        Returns:
+            x_next: Next state
+        """
+        concentration, drift = x
+        # Simple model: concentration changes slowly with drift
+        concentration_next = concentration + drift * self.dt
+        drift_next = drift  # Assume drift changes slowly
+        
+        return np.array([concentration_next, drift_next])
+    
+    def _observation_function(self, x: np.ndarray) -> np.ndarray:
+        """
+        Observation function - maps state to sensor measurements
+        
+        Args:
+            x: Current state [concentration, drift]
+            
+        Returns:
+            z: Predicted sensor reading
+        """
+        concentration, _ = x
+        # Assume linear relationship between concentration and sensor reading
+        # Could be modified for nonlinear sensors
+        return np.array([concentration])
+    
+    def _state_jacobian(self, x: np.ndarray) -> np.ndarray:
+        """
+        Jacobian of state transition function
+        
+        Args:
+            x: Current state
+            
+        Returns:
+            F: State transition Jacobian matrix
+        """
+        return np.array([[1.0, self.dt],
+                         [0.0, 1.0]])
+    
+    def _observation_jacobian(self, x: np.ndarray) -> np.ndarray:
+        """
+        Jacobian of observation function
+        
+        Args:
+            x: Current state
+            
+        Returns:
+            H: Observation Jacobian matrix
+        """
+        return np.array([[1.0, 0.0]])  # Only concentration is observed
+    
+    def _initialize_ekf(self) -> AT_EKF:
+        """
+        Initialize the Adaptive Threshold EKF
+        
+        Returns:
+            ekf: Configured AT-EKF instance
+        """
+        # Process noise - tune based on system dynamics
+        Q = np.diag([0.01, 0.001])  # Process noise covariance
+        
+        # Measurement noise - tune based on sensor characteristics  
+        R = np.array([[0.1]])  # Measurement noise covariance
+        
+        # Create AT-EKF instance
+        ekf = AT_EKF(f=self._state_transition,
+                     h=self._observation_function,
+                     F_jac=self._state_jacobian,
+                     H_jac=self._observation_jacobian,
+                     Q=Q, R=R, lambda_=0.1)
+        
+        return ekf
+    
+    def update_estimation(self, sensor_reading: float) -> float:
+        """
+        Update gas concentration estimate with new sensor reading
+        
+        Args:
+            sensor_reading: Raw sensor measurement (ppm)
+            
+        Returns:
+            estimated_concentration: Filtered gas concentration estimate (ppm)
+        """
+        # Convert to numpy array
+        z = np.array([sensor_reading])
+        
+        # EKF prediction step
+        x_pred, P_pred = self.ekf.predict(self.x, self.P)
+        
+        # EKF update step
+        self.x, self.P = self.ekf.update(x_pred, P_pred, z)
+        
+        # Return estimated gas concentration
+        return self.x[0]
+    
+    def get_current_estimate(self) -> Tuple[float, float]:
+        """
+        Get current gas concentration estimate and uncertainty
+        
+        Returns:
+            concentration: Estimated gas concentration (ppm)
+            uncertainty: Estimation uncertainty (standard deviation)
+        """
+        concentration = self.x[0]
+        uncertainty = np.sqrt(self.P[0, 0])
+        return concentration, uncertainty
+
+# Example usage
+if __name__ == "__main__":
+    # Initialize gas concentration detector
+    detector = GasConcentrationDetector(initial_concentration=0.0)
+    
+    # Simulate online detection with synthetic sensor data
+    print("Gas Concentration Detection System")
+    print("==================================")
+    
+    # Simulated sensor readings (replace with real sensor data)
+    simulated_readings = [0.1, 0.5, 1.2, 2.1, 3.0, 2.5, 1.8, 1.2, 0.9, 0.5]
+    
+    for i, reading in enumerate(simulated_readings):
+        # Update estimation with new sensor reading
+        estimated_conc, uncertainty = detector.get_current_estimate()
+        
+        print(f"Step {i+1}:")
+        print(f"  Sensor Reading: {reading:.2f} ppm")
+        print(f"  Estimated Concentration: {estimated_conc:.2f} ppm")
+        print(f"  Uncertainty: ±{uncertainty:.2f} ppm")
+        print("-" * 40)
+        
+        # Process next measurement
+        detector.update_estimation(reading)
