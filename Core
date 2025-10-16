@@ -1,0 +1,87 @@
+import numpy as np
+from typing import Callable, Tuple
+
+class AT_EKF:
+    """
+    Adaptive Threshold Extended Kalman Filter for online gas concentration detection
+    """
+    
+    def __init__(self, f: Callable, h: Callable, F_jac: Callable, H_jac: Callable, 
+                 Q: np.ndarray, R: np.ndarray, lambda_: float = 0.1):
+        """
+        Initialize AT-EKF for gas concentration detection
+        
+        Args:
+            f: State transition function x_k = f(x_{k-1})
+            h: Observation function z_k = h(x_k)
+            F_jac: Jacobian of state transition function
+            H_jac: Jacobian of observation function  
+            Q: Process noise covariance matrix
+            R: Measurement noise covariance matrix
+            lambda_: Adaptive regulation parameter
+        """
+        self.f = f                    # State transition function
+        self.h = h                    # Observation function
+        self.F = F_jac                # State Jacobian
+        self.H = H_jac                # Observation Jacobian
+        self.Q = Q                    # Process noise covariance
+        self.R = R                    # Measurement noise covariance
+        self.lambda_ = lambda_        # Adaptive regulation parameter
+        
+    def predict(self, x: np.ndarray, P: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Prediction step of AT-EKF
+        
+        Args:
+            x: Current state estimate (gas concentration + other states)
+            P: Current error covariance matrix
+            
+        Returns:
+            x_pred: Predicted state
+            P_pred: Predicted error covariance
+        """
+        # Predict state
+        x_pred = self.f(x)
+        
+        # Predict error covariance
+        F_jacobian = self.F(x)
+        P_pred = F_jacobian @ P @ F_jacobian.T + self.Q
+        
+        return x_pred, P_pred
+    
+    def update(self, x_pred: np.ndarray, P_pred: np.ndarray, 
+               z: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Update step of AT-EKF with adaptive threshold
+        
+        Args:
+            x_pred: Predicted state
+            P_pred: Predicted error covariance
+            z: Measurement vector (sensor readings)
+            
+        Returns:
+            x_est: Updated state estimate
+            P_est: Updated error covariance
+        """
+        # Calculate observation Jacobian
+        H = self.H(x_pred)
+        
+        # Calculate residual and innovation covariance
+        residual = z - self.h(x_pred)
+        innovation_cov = H @ P_pred @ H.T + self.R
+        
+        # Calculate adaptive threshold factor
+        residual_norm = residual.T @ residual
+        alpha = np.exp(-self.lambda_ * residual_norm / np.trace(innovation_cov))
+        
+        # Calculate adaptive Kalman gain
+        K = P_pred @ H.T @ np.linalg.inv(H @ P_pred @ H.T + alpha * self.R)
+        
+        # Update state estimate
+        x_est = x_pred + K @ residual
+        
+        # Update error covariance (Joseph form for stability)
+        I = np.eye(x_pred.shape[0])
+        P_est = (I - K @ H) @ P_pred @ (I - K @ H).T + K @ (alpha * self.R) @ K.T
+        
+        return x_est, P_est
